@@ -1,0 +1,25 @@
+version = 1
+revision = 3
+requires-python = ">=3.14"
+
+[[package]]
+name = "dearpygui"
+version = "2.3"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fb/fb/b34749cd99357ea488366f7a9a74eca4723c9e028ef17a96aaecec050b41/dearpygui-2.3-cp314-cp314-macosx_13_0_arm64.whl", hash = "sha256:d891fed5858554aa689e55d75471adbf6c665292b42648f1f9faeda14fdccc8d", size = 2002930, upload-time = "2026-04-16T12:16:22.259Z" },
+    { url = "https://files.pythonhosted.org/packages/a4/fc/78063f913b07b8e97ca65a201dab40e08b104a13ed503cfb8151def35c8f/dearpygui-2.3-cp314-cp314-manylinux1_x86_64.whl", hash = "sha256:7130438dfea536f56ea5e620639a0e831b37b698383bd4b7ecd28d62d1812e62", size = 2678546, upload-time = "2026-04-16T12:16:29.784Z" },
+    { url = "https://files.pythonhosted.org/packages/21/44/4a525dfb6e501e3db63ea3b9b48e3657647b8593e45f11ec2ed039038d42/dearpygui-2.3-cp314-cp314-manylinux2014_aarch64.whl", hash = "sha256:6bd79c301321efb9f1285b19d74bd33d0797bba2f4bb9446a97d935c3fe961ec", size = 2502408, upload-time = "2026-04-16T12:16:39.188Z" },
+    { url = "https://files.pythonhosted.org/packages/10/e5/21e7e7464bd4dd43260f98403ce3c55ff7c0fb3586352b677096ebc49d25/dearpygui-2.3-cp314-cp314-win_amd64.whl", hash = "sha256:5796290c27f4f41bbd95b7ec53eba0e60f92843e4491470d013427dc2828d7ad", size = 1943120, upload-time = "2026-04-16T12:16:12.202Z" },
+]
+
+[[package]]
+name = "dearpygui-resizablechildwindow"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "dearpygui" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "dearpygui", specifier = ">=2.3" }]

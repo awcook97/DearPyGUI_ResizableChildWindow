@@ -1,0 +1,16 @@
+[project]
+name = "dearpygui-resizablechildwindow"
+version = "0.1.0"
+description = "Resizable child windows and split panes for DearPyGUI"
+readme = "README.md"
+authors = [
+    { name = "Andrew Cook", email = "awcook97@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "dearpygui>=2.3",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
