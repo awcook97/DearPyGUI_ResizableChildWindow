@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "Resizable child windows and split panes for DearPyGUI"
 readme = "README.md"
 authors = [
-    { name = "Andrew Cook", email = "awcook97@gmail.com" }
+    { name = "Andrew Cook", email = "andrewcook.gcb@gmail.com" }
 ]
 requires-python = ">=3.14"
 dependencies = [
