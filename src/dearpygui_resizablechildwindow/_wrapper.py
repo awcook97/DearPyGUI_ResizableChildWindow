@@ -21,21 +21,21 @@ Usage — identical to the originals:
 Key differences from dpg.add_child_window:
   - resizable_x defaults to True  (was False)
   - resizable_y defaults to True  (was False)
-  - Adds two extra keyword-only args: min_width (default 20), min_height (default 20)
-  - When resizable_x=True and width>0, a 6px drag handle is added to the right
-  - When resizable_y=True and height>0, a 6px drag handle is added to the bottom
-  - If both, a 6x6 corner handle allows simultaneous resize
+  - Adds extra keyword-only args: min_width (default 20), min_height (default 20),
+    handle_thickness (default 6)
+  - When resizable_x=True and width>0, a drag handle is added to the right
+  - When resizable_y=True and height>0, a drag handle is added to the bottom
+  - If both, a corner handle allows simultaneous resize
   - When width=0 or height=0 (auto-size), that axis falls back to native resizable_x/y
 """
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any, Callable, List, Tuple, Union
+from typing import Any, Callable, Generator, List, Tuple, Union
 
 import dearpygui.dearpygui as dpg
 
-_HANDLE = 6   # drag handle thickness in pixels
-_MIN    = 20  # default minimum content dimension
+_MIN = 20  # default minimum content dimension
 
 # Capture the real dpg function before patch_dpg() can replace it.
 # All internal calls must go through this reference to avoid infinite recursion.
@@ -51,7 +51,11 @@ _instances: dict[int | str, _ResizableWindowImpl] = {}
 # --------------------------------------------------------------------------- #
 
 class _ResizableWindowImpl:
-    """Manages drag handles and resize callbacks for one child_window."""
+    """Manages drag handles and resize callbacks for one resizable child_window.
+
+    Owns all DPG handler and theme items it creates. Call destroy() to clean up,
+    or let _on_mouse_move self-clean when the content window is deleted externally.
+    """
 
     def __init__(
         self,
@@ -65,6 +69,20 @@ class _ResizableWindowImpl:
         min_w: int,
         min_h: int,
     ) -> None:
+        """Attach themes and mouse handlers to the given set of DPG items.
+
+        Args:
+            content: Tag of the user-visible content child_window.
+            outer_group: Tag of the outermost group that owns all layout items.
+                Deleting this cascades to all handles, releasing theme bindings.
+            right_handle: Tag of the right-edge drag strip, or None.
+            bottom_handle: Tag of the bottom-edge drag strip, or None.
+            corner_handle: Tag of the corner drag square (both axes), or None.
+            init_w: Initial content width in pixels.
+            init_h: Initial content height in pixels.
+            min_w: Minimum content width when dragging.
+            min_h: Minimum content height when dragging.
+        """
         self._content       = content
         self._outer         = outer_group
         self._right         = right_handle
@@ -88,6 +106,7 @@ class _ResizableWindowImpl:
 
     @property
     def _handles(self) -> list[int]:
+        """Non-None handle tags as a flat list."""
         return [h for h in (self._right, self._bottom, self._corner) if h is not None]
 
     # ------------------------------------------------------------------ #
@@ -95,6 +114,7 @@ class _ResizableWindowImpl:
     # ------------------------------------------------------------------ #
 
     def _build_themes(self) -> None:
+        """Create the normal (grey) and hover (blue) themes for the drag handles."""
         self._theme_normal = dpg.add_theme()
         with dpg.theme_component(dpg.mvChildWindow, parent=self._theme_normal):
             dpg.add_theme_color(dpg.mvThemeCol_ChildBg, (55, 55, 55, 255))
@@ -114,6 +134,7 @@ class _ResizableWindowImpl:
     # ------------------------------------------------------------------ #
 
     def _register_handlers(self) -> None:
+        """Create the global mouse handler registry and attach all callbacks."""
         self._registry = dpg.add_handler_registry()
         dpg.add_mouse_click_handler(
             dpg.mvMouseButton_Left, callback=self._on_click, parent=self._registry,
@@ -126,7 +147,8 @@ class _ResizableWindowImpl:
         )
         dpg.add_mouse_move_handler(callback=self._on_mouse_move, parent=self._registry)
 
-    def _on_click(self, sender: int, app_data: int) -> None:
+    def _on_click(self, sender: int, app_data: int, user_data=None) -> None:
+        """DPG callback; records which axes to drag based on which handle was hovered."""
         if self._destroyed:
             return
         right_hov  = self._right  is not None and bool(dpg.is_item_hovered(self._right))
@@ -140,7 +162,8 @@ class _ResizableWindowImpl:
             self._drag_y = True
             self._start_h = dpg.get_item_height(self._content) or self._cur_h
 
-    def _on_drag(self, sender: int, app_data: list) -> None:
+    def _on_drag(self, sender: int, app_data: list, user_data=None) -> None:
+        """DPG callback; app_data = [button, cumulative_dx, cumulative_dy] from click origin."""
         if self._destroyed or not (self._drag_x or self._drag_y):
             return
 
@@ -160,14 +183,15 @@ class _ResizableWindowImpl:
                 if self._right is not None:
                     dpg.set_item_height(self._right, new_h)
 
-    def _on_release(self, sender: int, app_data: int) -> None:
+    def _on_release(self, sender: int, app_data: int, user_data=None) -> None:
+        """DPG callback; clears drag state on left button release."""
         self._drag_x = False
         self._drag_y = False
 
-    def _on_mouse_move(self, sender: int, app_data: list) -> None:
+    def _on_mouse_move(self, sender: int, app_data: list, user_data=None) -> None:
+        """DPG callback; updates handle hover colours and self-cleans if items are gone."""
         if self._destroyed:
             return
-        # Self-cleanup when the parent hierarchy is deleted externally
         if not dpg.does_item_exist(self._content):
             self.destroy()
             return
@@ -184,6 +208,7 @@ class _ResizableWindowImpl:
     # ------------------------------------------------------------------ #
 
     def destroy(self) -> None:
+        """Delete all DPG items owned by this instance and remove it from _instances."""
         if self._destroyed:
             return
         self._destroyed = True
@@ -205,6 +230,7 @@ _spacing_theme: int | None = None
 
 
 def _get_spacing_theme() -> int:
+    """Return (creating if needed) the shared zero-spacing group theme."""
     global _spacing_theme
     if _spacing_theme is None or not dpg.does_item_exist(_spacing_theme):
         _spacing_theme = dpg.add_theme()
@@ -244,34 +270,79 @@ def add_child_window(
     no_scroll_with_mouse:   bool                        = False,
     flattened_navigation:   bool                        = True,
     always_use_window_padding: bool                     = False,
-    resizable_x:            bool                        = True,   # default True (changed from dpg)
-    resizable_y:            bool                        = True,   # default True (changed from dpg)
+    resizable_x:            bool                        = True,
+    resizable_y:            bool                        = True,
     always_auto_resize:     bool                        = False,
     frame_style:            bool                        = False,
     auto_resize_x:          bool                        = False,
     auto_resize_y:          bool                        = False,
-    # Extra kwargs not in dpg.add_child_window
     min_width:              int                         = _MIN,
     min_height:             int                         = _MIN,
+    handle_thickness:       int                         = 6,
     **kwargs,
 ) -> Union[int, str]:
-    """Drop-in for dpg.add_child_window() — same signature, adds drag resize handles.
+    """Drop-in for dpg.add_child_window() that adds visible drag-resize handles.
 
-    resizable_x / resizable_y default to True here (changed from dpg's False).
-    When width=0 or height=0 (auto-size), that axis falls back to the native
-    dpg resizable_x / resizable_y flag instead of adding a custom handle.
+    Accepts every parameter that dpg.add_child_window accepts, plus three extras:
+    min_width, min_height, and handle_thickness. The only defaults that differ
+    from stock DearPyGUI are resizable_x and resizable_y (both True here vs False
+    in DPG).
+
+    When width=0 or height=0 (auto-size mode), that axis falls back to DPG's
+    native resizable_x/resizable_y flag rather than adding a custom handle.
+
+    Args:
+        label: Optional label shown in DPG's item registry.
+        user_data: Arbitrary data stored on the item; passed to callbacks.
+        use_internal_label: If True, DPG manages the label string internally.
+        tag: Explicit integer or string tag. Auto-generated if 0.
+        width: Content width in pixels. 0 = auto-size (no custom X handle added).
+        height: Content height in pixels. 0 = auto-size (no custom Y handle added).
+        indent: Horizontal indent in pixels. -1 = no indent.
+        parent: Tag of the parent container. 0 = current container stack top.
+        before: Tag of the sibling item to insert before. 0 = append.
+        payload_type: Drag-and-drop payload type string.
+        drop_callback: Callback fired when a payload is dropped onto this window.
+        show: If False, the item is hidden.
+        pos: [x, y] absolute position. Empty list = layout-driven position.
+        filter_key: String used by DPG filter widgets.
+        tracked: If True, DPG keeps this item scrolled into view.
+        track_offset: Vertical alignment when tracked (0.0 = top, 1.0 = bottom).
+        border: Draw a border around the content window.
+        autosize_x: Expand width to fit content automatically.
+        autosize_y: Expand height to fit content automatically.
+        no_scrollbar: Hide the scrollbar.
+        horizontal_scrollbar: Show a horizontal scrollbar.
+        menubar: Reserve space for a menu bar inside the window.
+        no_scroll_with_mouse: Disable mouse-wheel scrolling.
+        flattened_navigation: Keyboard/gamepad navigation crosses window boundaries.
+        always_use_window_padding: Apply window padding even when border=False.
+        resizable_x: Add a right-edge drag handle (when width > 0). Defaults to True.
+        resizable_y: Add a bottom-edge drag handle (when height > 0). Defaults to True.
+        always_auto_resize: Always resize to fit content (DPG native flag).
+        frame_style: Draw a frame-style border.
+        auto_resize_x: DPG native auto-resize flag for X.
+        auto_resize_y: DPG native auto-resize flag for Y.
+        min_width: Minimum content width when dragging. Defaults to 20.
+        min_height: Minimum content height when dragging. Defaults to 20.
+        handle_thickness: Pixel thickness of the drag handle strips. Defaults to 6.
+        **kwargs: Additional keyword arguments forwarded to dpg.add_child_window.
+
+    Returns:
+        The DPG tag of the content child_window (same as *tag* if one was provided).
+
+    Example::
+
+        cw = add_child_window(width=300, height=200, parent="main")
+        dpg.add_text("content", parent=cw)
     """
     has_x = resizable_x and width  > 0
     has_y = resizable_y and height > 0
 
-    # Kwargs passed straight to the inner dpg.add_child_window.
-    # resizable_x / resizable_y on the content window: enable native flag only
-    # for auto-size axes (our explicit handles override for explicit-size axes).
     native_rx = resizable_x and not has_x
     native_ry = resizable_y and not has_y
 
     if not has_x and not has_y:
-        # No custom handles needed — pure pass-through.
         return _dpg_add_child_window(
             label=label, user_data=user_data, use_internal_label=use_internal_label,
             tag=tag, width=width, height=height, indent=indent,
@@ -290,8 +361,9 @@ def add_child_window(
         )
 
     # --- Build the outer layout group ---------------------------------- #
-    content_w = (width  - _HANDLE) if has_x else width
-    content_h = (height - _HANDLE) if has_y else height
+    ht = max(1, handle_thickness)
+    content_w = (width  - ht) if has_x else width
+    content_h = (height - ht) if has_y else height
 
     outer_kwargs: dict[str, Any] = {}
     if parent:
@@ -347,7 +419,7 @@ def add_child_window(
     if has_x:
         right_handle = _dpg_add_child_window(
             parent=row1,
-            width=_HANDLE,
+            width=ht,
             height=content_h,
             border=False,
             no_scrollbar=True,
@@ -362,7 +434,7 @@ def add_child_window(
         bottom_handle = _dpg_add_child_window(
             parent=row2,
             width=content_w,
-            height=_HANDLE,
+            height=ht,
             border=False,
             no_scrollbar=True,
             no_scroll_with_mouse=True,
@@ -370,8 +442,8 @@ def add_child_window(
         if has_x:
             corner_handle = _dpg_add_child_window(
                 parent=row2,
-                width=_HANDLE,
-                height=_HANDLE,
+                width=ht,
+                height=ht,
                 border=False,
                 no_scrollbar=True,
                 no_scroll_with_mouse=True,
@@ -429,9 +501,60 @@ def child_window(
     auto_resize_y:          bool                        = False,
     min_width:              int                         = _MIN,
     min_height:             int                         = _MIN,
+    handle_thickness:       int                         = 6,
     **kwargs,
-) -> Union[int, str]:
-    """Context-manager drop-in for dpg.child_window(). Yields the content pane tag."""
+) -> Generator[Union[int, str], None, None]:
+    """Context-manager drop-in for dpg.child_window(); yields the content pane tag.
+
+    Accepts every parameter that dpg.child_window accepts, plus min_width,
+    min_height, and handle_thickness. See add_child_window for full parameter docs.
+
+    Args:
+        label: Optional label shown in DPG's item registry.
+        user_data: Arbitrary data stored on the item; passed to callbacks.
+        use_internal_label: If True, DPG manages the label string internally.
+        tag: Explicit integer or string tag. Auto-generated if 0.
+        width: Content width in pixels. 0 = auto-size (no custom X handle).
+        height: Content height in pixels. 0 = auto-size (no custom Y handle).
+        indent: Horizontal indent in pixels. -1 = no indent.
+        parent: Tag of the parent container. 0 = current container stack top.
+        before: Tag of the sibling item to insert before. 0 = append.
+        payload_type: Drag-and-drop payload type string.
+        drop_callback: Callback fired when a payload is dropped onto this window.
+        show: If False, the item is hidden.
+        pos: [x, y] absolute position. Empty list = layout-driven position.
+        filter_key: String used by DPG filter widgets.
+        tracked: If True, DPG keeps this item scrolled into view.
+        track_offset: Vertical alignment when tracked (0.0 = top, 1.0 = bottom).
+        border: Draw a border around the content window.
+        autosize_x: Expand width to fit content automatically.
+        autosize_y: Expand height to fit content automatically.
+        no_scrollbar: Hide the scrollbar.
+        horizontal_scrollbar: Show a horizontal scrollbar.
+        menubar: Reserve space for a menu bar inside the window.
+        no_scroll_with_mouse: Disable mouse-wheel scrolling.
+        flattened_navigation: Keyboard/gamepad navigation crosses window boundaries.
+        always_use_window_padding: Apply window padding even when border=False.
+        resizable_x: Add a right-edge drag handle (when width > 0). Defaults to True.
+        resizable_y: Add a bottom-edge drag handle (when height > 0). Defaults to True.
+        always_auto_resize: Always resize to fit content (DPG native flag).
+        frame_style: Draw a frame-style border.
+        auto_resize_x: DPG native auto-resize flag for X.
+        auto_resize_y: DPG native auto-resize flag for Y.
+        min_width: Minimum content width when dragging. Defaults to 20.
+        min_height: Minimum content height when dragging. Defaults to 20.
+        handle_thickness: Pixel thickness of the drag handle strips. Defaults to 6.
+        **kwargs: Additional keyword arguments forwarded to dpg.add_child_window.
+
+    Yields:
+        The DPG tag of the content child_window. Items added inside the ``with``
+        block are parented to this window automatically via the container stack.
+
+    Example::
+
+        with child_window(width=300, height=200, parent="main") as cw:
+            dpg.add_text("content")
+    """
     widget = add_child_window(
         label=label, user_data=user_data, use_internal_label=use_internal_label,
         tag=tag, width=width, height=height, indent=indent,
@@ -447,6 +570,7 @@ def child_window(
         always_auto_resize=always_auto_resize, frame_style=frame_style,
         auto_resize_x=auto_resize_x, auto_resize_y=auto_resize_y,
         min_width=min_width, min_height=min_height,
+        handle_thickness=handle_thickness,
         **kwargs,
     )
     dpg.push_container_stack(widget)
@@ -457,16 +581,19 @@ def child_window(
 
 
 def patch_dpg() -> None:
-    """Monkey-patch dearpygui so all child windows gain resize handles.
+    """Monkey-patch dearpygui so all child windows automatically gain resize handles.
 
     Call once at app startup, before creating any child windows.
 
+    After this call, dpg.add_child_window and dpg.child_window are replaced with
+    the resizable versions from this module. All existing code gains drag handles
+    without any other changes.
+
+    Example::
+
         import dearpygui_resizablechildwindow
         dearpygui_resizablechildwindow.patch_dpg()
-
-    After this call, dpg.add_child_window and dpg.child_window are replaced
-    with the resizable versions. All existing code gains drag handles for
-    free without any other changes.
+        # All subsequent dpg.add_child_window / dpg.child_window calls are resizable.
     """
     import dearpygui.dearpygui as _dpg
     _dpg.add_child_window = add_child_window
